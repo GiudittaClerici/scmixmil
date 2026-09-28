@@ -43,8 +43,9 @@ Discussions = "https://github.com/AIH-SGML/mixmil/discussions"
 
 [project.optional-dependencies]
 experiments = ["anndata>=0.8.0", "jupyterlab>=3.0.0"]
+scverse = ["anndata>=0.8.0", "pandas>=1.5.0"]
 test = ["pytest>=6.0.0"]
-all = ["mixmil[experiments,test]"]
+all = ["mixmil[experiments,scverse,test]"]
 
 [build-system]
 requires = ["hatchling"]

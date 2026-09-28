@@ -12,7 +12,7 @@ def get_params(vc_mean, vc_sd, n_outs, n_vars, mean_field):
 
     if mean_field:
         cov_factor = torch.zeros(n_outs, n_vars, 1)
-        cov_logdiag = 2.0 * torch.log(torch.cat([sd_u, sd_z], 1))
+        cov_logdiag = 2.0 * torch.log(torch.clamp(torch.cat([sd_u, sd_z], 1), min=1e-8))
     else:
         diag = torch.diag_embed(torch.cat([sd_u, sd_z], 1))
         cov_factor = 1e-4 * torch.randn(diag.shape) + diag
@@ -34,7 +34,9 @@ class GaussianVariationalPosterior(torch.nn.Module):
             sd_z = sd_z.T
         else:
             mu_z = 1e-3 * torch.randn(n_outs, n_vars // 2)
-            sd_z = 1e-3 * torch.randn(n_outs, n_vars // 2)
+            # Standard deviations must be positive.  Sampling them from a
+            # zero-centred normal distribution can create NaNs in log(sd_z).
+            sd_z = torch.full((n_outs, n_vars // 2), 1e-3)
 
         mu, cov_factor, cov_logdiag = get_params(mu_z, sd_z, n_outs, n_vars, mean_field)
 

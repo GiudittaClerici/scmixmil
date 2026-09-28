@@ -21,6 +21,21 @@ pip install -e ".[experiments,test]"
 ```
 To enable computations on GPU please follow the installation instructions of [PyTorch](https://pytorch.org/) and [PyTorch Scatter](https://github.com/rusty1s/pytorch_scatter).
 MixMIL works e.g. with PyTorch 2.1.
+
+### AnnData / scverse
+
+Install the AnnData integration with:
+
+```
+pip install "mixmil[scverse]"
+```
+
+The `mixmil.anndata.prepare_anndata` helper converts cell-level features and
+annotations into donor/bag-level tensors while retaining bag and cell IDs.
+Embeddings can be read from `.X`, `.layers`, or `.obsm`; fixed effects and
+outcomes are read from `.obs`. Cell-level attention weights can be written back
+to `.obs` with `add_attention_to_anndata`, while bag-level predictions are
+stored in `.uns` with `add_bag_predictions_to_anndata`.
 ## Experiments
 See the notebooks in the `experiments` folder for examples on how to run the simulation and histopathology experiments.
 

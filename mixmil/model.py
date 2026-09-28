@@ -36,6 +36,10 @@ class MixMIL(torch.nn.Module):
             alpha (torch.Tensor): The fixed effect parameters. Shape: (K, P).
         """
         super().__init__()
+        if likelihood not in {"binomial", "categorical"}:
+            raise ValueError("likelihood must be either 'binomial' or 'categorical'")
+        if likelihood == "binomial" and (n_trials is None or n_trials <= 0):
+            raise ValueError("n_trials must be a positive number for a binomial likelihood")
         self.Q = Q
 
         alpha = torch.zeros((K, P))
@@ -56,13 +60,14 @@ class MixMIL(torch.nn.Module):
         self.n_trials = n_trials if likelihood == "binomial" else None
         self.is_trained = False
 
-    def init_with_mean_model(Xs, F, Y, likelihood="binomial", n_trials=None, mean_field=False):
+    @classmethod
+    def init_with_mean_model(cls, Xs, F, Y, likelihood="binomial", n_trials=None, mean_field=False):
         assert (likelihood == "binomial" and n_trials is not None and 0 < n_trials <= 2) or (
             likelihood == "categorical" and n_trials is None
         ), f"n_trials must be 1 or 2 to initialize with binomial mean model, got {n_trials=} and {likelihood=}"
         init_params = get_init_params(Xs, F, Y, likelihood, n_trials)
         Q, K, P = Xs[0].shape[1], F.shape[1], init_params[0].shape[1]
-        return MixMIL(Q, K, P, likelihood, n_trials, mean_field, init_params)
+        return cls(Q, K, P, likelihood, n_trials, mean_field, init_params)
 
     @property
     def prior_distribution(self):
@@ -149,7 +154,9 @@ class MixMIL(torch.nn.Module):
         u = segment_add_csr(w * t, i_ptr)
         return u
 
-    def train(self, X, F, Y, n_epochs=2_000, batch_size=64, lr=1e-3, verbose=True):
+    def fit(self, X, F, Y, n_epochs=2_000, batch_size=64, lr=1e-3, verbose=True):
+        """Fit MixMIL parameters on bagged tensors."""
+        super().train(True)
         train_loader = DataLoader(
             MILDataset(X, F, Y),
             shuffle=True,
@@ -172,9 +179,32 @@ class MixMIL(torch.nn.Module):
         self.is_trained = True
         return history
 
+    def train(self, mode=True, *args, **kwargs):
+        """Preserve PyTorch's mode-switching API and legacy MixMIL training.
+
+        ``model.fit(X, F, Y, ...)`` is the preferred API.  The historical
+        ``model.train(X, F, Y, ...)`` form remains supported for notebooks and
+        existing users, while ``model.train()`` and ``model.train(False)`` now
+        retain normal ``torch.nn.Module`` semantics.
+        """
+        if isinstance(mode, bool):
+            return super().train(mode)
+        if len(args) < 2:
+            raise TypeError("legacy training requires model.train(X, F, Y, ...); use model.fit(...) instead")
+        return self.fit(mode, args[0], args[1], **kwargs)
+
     @torch.inference_mode()
-    def predict(self, Xs, scaling=None):
-        return self(Xs, n_samples=None, predict=True, scaling=scaling).squeeze(2)
+    def predict(self, Xs, scaling=None, F=None):
+        """Predict latent bag effects, optionally including fixed effects."""
+        result = self(Xs, n_samples=None, predict=True, scaling=scaling).squeeze(2)
+        if F is not None:
+            result = result + F.mm(self.alpha)
+        return result
+
+    @torch.inference_mode()
+    def predict_logits(self, Xs, F, scaling=None):
+        """Return bag-level logits including fixed and attention effects."""
+        return self.predict(Xs, scaling=scaling, F=F)
 
     @torch.inference_mode()
     def get_weights(self, Xs, ravel=False):

@@ -13,6 +13,19 @@ def setup_scatter(Xs):
     return x, i, i_ptr
 
 
+def to_device(value, device):
+    """Move tensors, modules, and nested containers to a device."""
+    if isinstance(value, dict):
+        return {key: to_device(item, device) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return tuple(to_device(item, device) for item in value)
+    if isinstance(value, list):
+        return [to_device(item, device) for item in value]
+    if isinstance(value, (torch.Tensor, torch.nn.Module)):
+        return value.to(device)
+    return value
+
+
 def xgower_factor(X):
     a = np.power(X, 2).sum()
     b = X.dot(X.sum(0)).sum()

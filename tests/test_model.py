@@ -47,6 +47,10 @@ def test_initialization():
     model = MixMIL(Q=10, K=5, P=2, likelihood="binomial", n_trials=2)
     assert model.Q == 10
     assert model.alpha.shape == (5, 2)
+    assert model.train() is model
+    model.eval()
+    assert not model.training
+    model.train()
 
 
 @pytest.mark.parametrize(
