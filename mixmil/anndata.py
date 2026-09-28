@@ -6,7 +6,7 @@ identifiers attached to the converted data.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -112,7 +112,7 @@ class AnnDataMixMILData:
     test: Optional[BaggedData]
     feature_names: Tuple[str, ...]
     fixed_effect_names: Tuple[str, ...]
-    target_name: str
+    target_name: Union[str, Tuple[str, ...]]
     bag_key: str
     feature_source: str
     feature_key: Optional[str]
@@ -176,17 +176,17 @@ def _make_split(
     for bag in selected_bags:
         rows = np.flatnonzero(mask & (bag_values == bag))
         Xs.append(torch.as_tensor(features[rows], dtype=dtype))
-        Ys.append(target_values[bag_order.index(bag)])
+        Ys.append(target_values[bag_order.index(bag), :])
         cell_ids.append([str(x) for x in obs_names[rows]])
     F = torch.as_tensor(fixed_values[[bag_order.index(bag) for bag in selected_bags]], dtype=dtype)
-    Y = torch.as_tensor(np.asarray(Ys, dtype=np.float32)[:, None], dtype=dtype)
+    Y = torch.as_tensor(np.asarray(Ys, dtype=np.float32), dtype=dtype)
     return BaggedData(Xs=Xs, F=F, Y=Y, bag_ids=selected_bags, cell_ids=cell_ids)
 
 
 def prepare_anndata(
     adata: Any,
     bag_key: str,
-    target_key: str,
+    target_key: Union[str, Sequence[str]],
     feature_key: Optional[str] = None,
     feature_source: str = "obsm",
     fixed_effects: Optional[Sequence[str]] = None,
@@ -205,21 +205,26 @@ def prepare_anndata(
     """
     if bag_key not in adata.obs.columns:
         raise KeyError(f"Bag column {bag_key!r} was not found in adata.obs")
-    if target_key not in adata.obs.columns:
-        raise KeyError(f"Target column {target_key!r} was not found in adata.obs")
+    target_keys = [target_key] if isinstance(target_key, str) else list(target_key)
+    if not target_keys:
+        raise ValueError("At least one target column is required")
+    missing_targets = [key for key in target_keys if key not in adata.obs.columns]
+    if missing_targets:
+        raise KeyError(f"Target columns were not found in adata.obs: {missing_targets}")
     if not getattr(adata.obs_names, "is_unique", len(set(adata.obs_names)) == adata.n_obs):
         raise ValueError("AnnData observation names must be unique")
 
     features, feature_names = _resolve_features(adata, feature_source, feature_key)
     obs_names = np.asarray([str(x) for x in adata.obs_names])
     bag_values = np.asarray([str(x) for x in adata.obs[bag_key].to_numpy()])
-    target_values = _as_numeric(adata.obs[target_key].to_numpy(), target_key)
+    target_values = np.column_stack([_as_numeric(adata.obs[key].to_numpy(), key) for key in target_keys])
 
     bag_order = list(dict.fromkeys(bag_values.tolist()))
     bag_rows = {bag: np.flatnonzero(bag_values == bag) for bag in bag_order}
-    bag_targets = np.asarray([target_values[rows[0]] for rows in bag_rows.values()], dtype=np.float32)
-    for bag, rows in bag_rows.items():
-        _first_unique(target_values[rows].tolist())
+    bag_targets = np.asarray([target_values[rows[0], :] for rows in bag_rows.values()], dtype=np.float32)
+    for bag_index, (bag, rows) in enumerate(bag_rows.items()):
+        if not np.allclose(target_values[rows, :], bag_targets[bag_index, :]):
+            raise ValueError(f"Target values are inconsistent within bag {bag!r}")
 
     fixed_effects = list(fixed_effects or [])
     fixed_values, fixed_names = _encode_fixed_effects(adata, bag_order, bag_rows, fixed_effects)
@@ -269,19 +274,19 @@ def prepare_anndata(
 
     target_scaling = None
     if scale_target:
-        mean = float(train.Y.mean())
-        std = max(float(train.Y.std()), 1e-8)
+        mean = train.Y.mean(0)
+        std = train.Y.std(0).clamp_min(1e-8)
         train.Y = (train.Y - mean) / std
         if test is not None:
             test.Y = (test.Y - mean) / std
-        target_scaling = (mean, std)
+        target_scaling = (mean.tolist(), std.tolist())
 
     return AnnDataMixMILData(
         train=train,
         test=test,
         feature_names=feature_names,
         fixed_effect_names=tuple(fixed_names),
-        target_name=target_key,
+        target_name=target_keys[0] if len(target_keys) == 1 else tuple(target_keys),
         bag_key=bag_key,
         feature_source=feature_source,
         feature_key=feature_key,

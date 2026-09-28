@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch.distributions import Binomial, Categorical, LowRankMultivariateNormal
+from torch.distributions import Binomial, Categorical, LowRankMultivariateNormal, Normal
 from torch.distributions.kl import kl_divergence
 from torch.utils.data import DataLoader
 from torch_scatter import scatter_softmax, segment_add_csr
@@ -25,7 +25,7 @@ class MixMIL(torch.nn.Module):
         - Q (int): The dimension of the latent space.
         - K (int): The number of fixed effects.
         - P (int): The number of outputs.
-        - likelihood (str, optional): The likelihood to use. Either "binomial" or "categorical". Default is "binomial".
+        - likelihood (str, optional): The likelihood to use. Either "binomial", "categorical", or "gaussian". Default is "binomial".
         - n_trials (int, optional): Number of trials for binomial likelihood. Not used for categorical. Default is 2.
         - mean_field (bool, optional): Toggle mean field approximation for the posterior. Default is False.
         - init_params (tuple, optional): Tuple of (mean, var, var_z, alpha) to initialize the model. Default is None.
@@ -36,8 +36,8 @@ class MixMIL(torch.nn.Module):
             alpha (torch.Tensor): The fixed effect parameters. Shape: (K, P).
         """
         super().__init__()
-        if likelihood not in {"binomial", "categorical"}:
-            raise ValueError("likelihood must be either 'binomial' or 'categorical'")
+        if likelihood not in {"binomial", "categorical", "gaussian"}:
+            raise ValueError("likelihood must be either 'binomial', 'categorical', or 'gaussian'")
         if likelihood == "binomial" and (n_trials is None or n_trials <= 0):
             raise ValueError("n_trials must be a positive number for a binomial likelihood")
         self.Q = Q
@@ -53,6 +53,7 @@ class MixMIL(torch.nn.Module):
         self.alpha = torch.nn.Parameter(alpha)
         self.log_sigma_u = torch.nn.Parameter(log_sigma_u)
         self.log_sigma_z = torch.nn.Parameter(log_sigma_z)
+        self.log_sigma_y = torch.nn.Parameter(torch.zeros((1, P)))
 
         self.posterior = GaussianVariationalPosterior(2 * Q, P, mean_field, init_params)
 
@@ -62,9 +63,10 @@ class MixMIL(torch.nn.Module):
 
     @classmethod
     def init_with_mean_model(cls, Xs, F, Y, likelihood="binomial", n_trials=None, mean_field=False):
-        assert (likelihood == "binomial" and n_trials is not None and 0 < n_trials <= 2) or (
-            likelihood == "categorical" and n_trials is None
-        ), f"n_trials must be 1 or 2 to initialize with binomial mean model, got {n_trials=} and {likelihood=}"
+        assert (
+            (likelihood == "binomial" and n_trials is not None and 0 < n_trials <= 2)
+            or (likelihood in {"categorical", "gaussian"} and n_trials is None)
+        ), f"Invalid n_trials={n_trials} for likelihood={likelihood}"
         init_params = get_init_params(Xs, F, Y, likelihood, n_trials)
         Q, K, P = Xs[0].shape[1], F.shape[1], init_params[0].shape[1]
         return cls(Q, K, P, likelihood, n_trials, mean_field, init_params)
@@ -98,7 +100,10 @@ class MixMIL(torch.nn.Module):
             logits = logits.permute(0, 2, 1)
             if logits.shape[-1] == 1:
                 logits = torch.cat([-logits, logits], 2)
-            return Categorical(logits=logits).log_prob(y).mean()
+            return Categorical(logits=logits).log_prob(y.long()).mean()
+        elif self.likelihood_name == "gaussian":
+            scale = torch.exp(self.log_sigma_y).unsqueeze(2)
+            return Normal(loc=logits, scale=scale).log_prob(y[:, :, None]).sum(1).mean()
 
     def loss(self, u, f, y, kld_w=1.0, return_dict=False):
         logits = f.mm(self.alpha)[:, :, None] + u
@@ -231,6 +236,8 @@ class MixMIL(torch.nn.Module):
         string = f"Q={self.Q}, K={self.alpha.shape[0]}, P={self.alpha.shape[1]}, likelihood={self.likelihood_name}"
         if self.likelihood_name == "binomial":
             string += f", n_trials={self.n_trials}"
+        elif self.likelihood_name == "gaussian":
+            string += f", sigma_y={tuple(self.log_sigma_y.shape)}"
         string += f", device={self.alpha.device}, trained={self.is_trained}"
         string += f"\n(alpha): Parameter(shape={tuple(self.alpha.shape)})\n"
         string += f"(log_sigma_u): Parameter(shape={tuple(self.log_sigma_u.shape)})\n"

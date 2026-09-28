@@ -81,13 +81,36 @@ def get_lr_init_params(X, Y, b, Fiv):
     return [torch.Tensor(el) for el in (mu_beta, sd_beta, var_z, alpha)]
 
 
+def get_gaussian_init_params(Xs, F, Y):
+    """Initialize a Gaussian model with a fixed-effect plus mean-embedding OLS fit."""
+    Xm = np.concatenate(
+        [x.detach().cpu().numpy().mean(0, keepdims=True) if torch.is_tensor(x) else x.mean(0, keepdims=True) for x in Xs],
+        axis=0,
+    )
+    Fe = F.detach().cpu().numpy() if torch.is_tensor(F) else np.asarray(F)
+    Ye = Y.detach().cpu().numpy() if torch.is_tensor(Y) else np.asarray(Y)
+    design = np.concatenate([Fe, Xm], axis=1)
+    coefficients = np.linalg.lstsq(design, Ye, rcond=None)[0]
+    alpha = coefficients[: Fe.shape[1]]
+    mu_beta = coefficients[Fe.shape[1] :]
+    residuals = Ye - design.dot(coefficients)
+    residual_sd = np.maximum(residuals.std(0, keepdims=True), 1e-3)
+    sd_beta = np.broadcast_to(0.1 * residual_sd, mu_beta.shape).copy()
+    var_z = (mu_beta**2 + sd_beta**2).mean(axis=0, keepdims=True)
+    return [torch.Tensor(el) for el in (mu_beta, sd_beta, var_z, alpha)]
+
+
 def _list2tensor(_list):
     return torch.Tensor(np.stack(_list, axis=1))
 
 
 def get_init_params(Xs, F, Y, likelihood, n_trials):
-    Xm = np.concatenate([x.mean(0, keepdims=True) for x in Xs], axis=0)
-    Fe, Ye = F.numpy(), Y.long().numpy()
+    Xm = np.concatenate(
+        [x.detach().cpu().numpy().mean(0, keepdims=True) if torch.is_tensor(x) else x.mean(0, keepdims=True) for x in Xs],
+        axis=0,
+    )
+    Fe = F.detach().cpu().numpy() if torch.is_tensor(F) else np.asarray(F)
+    Ye = Y.detach().cpu().numpy() if torch.is_tensor(Y) else np.asarray(Y)
 
     if likelihood == "binomial":
         Xm = (Xm - Xm.mean(0, keepdims=True)) / xgower_factor(Xm)
@@ -95,7 +118,7 @@ def get_init_params(Xs, F, Y, likelihood, n_trials):
         if n_trials == 2:
             Xm, Fe = Xm.repeat(2, axis=0), Fe.repeat(2, axis=0)
             to_expanded = np.array(([[0, 0], [1, 0], [1, 1]]))
-            Ye = to_expanded[Y.long().numpy().T].transpose(1, 2, 0).reshape(-1, Y.shape[1])
+            Ye = to_expanded[Ye.astype(int).T].transpose(1, 2, 0).reshape(-1, Y.shape[1])
 
         mu_z, sd_z, var_z, alpha = get_binomial_init_params(Xm, Fe, Ye)
 
@@ -104,5 +127,11 @@ def get_init_params(Xs, F, Y, likelihood, n_trials):
         Xm = (Xm - Xm.mean(0, keepdims=True)) / (Xm.std(0, keepdims=True) * np.sqrt(Xm.shape[-1]))
 
         mu_z, sd_z, var_z, alpha = get_lr_init_params(Xm, Ye, b, Fiv)
+
+    elif likelihood == "gaussian":
+        mu_z, sd_z, var_z, alpha = get_gaussian_init_params(Xs, F, Y)
+
+    else:
+        raise ValueError(f"Unknown likelihood: {likelihood}")
 
     return mu_z, sd_z, var_z, alpha

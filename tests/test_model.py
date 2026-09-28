@@ -53,11 +53,22 @@ def test_initialization():
     model.train()
 
 
+def test_gaussian_mean_initialization_and_fit():
+    Xs = [torch.randn(6, 3) for _ in range(8)]
+    F = torch.ones(8, 1)
+    Y = torch.randn(8, 1)
+    model = MixMIL.init_with_mean_model(Xs, F, Y, likelihood="gaussian", mean_field=True)
+    history = model.fit(Xs, F, Y, n_epochs=1, verbose=False)
+    assert model.likelihood_name == "gaussian"
+    assert len(history) == 1
+
+
 @pytest.mark.parametrize(
     "Q, K, P, likelihood, n_trials, mean_field",
     [
         (10, 5, 2, "categorical", None, True),
         (10, 5, 2, "categorical", None, False),
+        (10, 5, 2, "gaussian", None, True),
         (10, 5, 2, "binomial", 1, True),
         (10, 5, 2, "binomial", 2, False),
         (10, 5, 1, "binomial", 2, False),

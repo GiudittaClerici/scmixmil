@@ -33,9 +33,16 @@ pip install "mixmil[scverse]"
 The `mixmil.anndata.prepare_anndata` helper converts cell-level features and
 annotations into donor/bag-level tensors while retaining bag and cell IDs.
 Embeddings can be read from `.X`, `.layers`, or `.obsm`; fixed effects and
-outcomes are read from `.obs`. Cell-level attention weights can be written back
-to `.obs` with `add_attention_to_anndata`, while bag-level predictions are
-stored in `.uns` with `add_bag_predictions_to_anndata`.
+outcomes are read from `.obs`. Pass multiple outcome columns for multi-label
+prediction. The model supports independent binomial outputs for binary labels
+and a Gaussian likelihood for continuous phenotypes. Cell-level attention
+weights can be written back to `.obs` with `add_attention_to_anndata`, while
+bag-level predictions are stored in `.uns` with
+`add_bag_predictions_to_anndata`.
+
+See the tutorials in `experiments/tutorial_multilabel_anndata.ipynb`,
+`experiments/tutorial_binary_anndata.ipynb`, and
+`experiments/tutorial_continuous_anndata.ipynb`.
 ## Experiments
 See the notebooks in the `experiments` folder for examples on how to run the simulation and histopathology experiments.
 

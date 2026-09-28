@@ -13,6 +13,7 @@ def small_adata():
         "donor": ["d1", "d1", "d2", "d2", "d3"],
         "split": ["train", "train", "train", "train", "test"],
         "target": [0, 0, 1, 1, 0],
+        "target2": [1, 1, 0, 0, 1],
         "age": [20, 20, 40, 40, 30],
         "sex": [0, 0, 1, 1, 0],
     }
@@ -57,3 +58,15 @@ def test_attention_is_aligned_by_cell_id(small_adata):
     assert result.obs.loc["0", "mixmil_attention"] == pytest.approx(0.1)
     assert result.obs.loc["1", "mixmil_attention"] == pytest.approx(0.9)
     assert np.isnan(result.obs.loc["4", "mixmil_attention"])
+
+
+def test_prepare_anndata_supports_multiple_targets(small_adata):
+    prepared = prepare_anndata(
+        small_adata,
+        bag_key="donor",
+        target_key=["target", "target2"],
+        feature_key="embedding",
+        split_key="split",
+    )
+    assert prepared.train.Y.shape == (2, 2)
+    assert prepared.target_name == ("target", "target2")
